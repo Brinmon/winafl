@@ -1,4 +1,4 @@
-# WinAFL (Brinmon fork)
+# WinAFL
 
 本仓库是 [googleprojectzero/winafl](https://github.com/googleprojectzero/winafl) 的 fork，
 用于维护一个可在现代 Windows + VS2022 环境下**开箱即编译**的版本，并做定制开发。

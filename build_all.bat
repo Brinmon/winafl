@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem WinAFL (Brinmon fork) - FULL build, ALL instrumentation modes
+rem WinAFL - FULL build, ALL instrumentation modes
 rem   -P  Intel PT  (fastest, hardware tracing, needs Win10 1809+)
 rem   -y  TinyInst  (fast, lightweight, self-contained in afl-fuzz.exe)
 rem   -D  DynamoRIO(most flexible, needs bundled DynamoRIO runtime)
