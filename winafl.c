@@ -193,9 +193,15 @@ event_soft_kill(process_id_t pid, int exit_code)
 
 char ReadCommandFromPipe()
 {
-	DWORD num_read;
-	char result;
-	ReadFile(pipe, &result, 1, &num_read, NULL);
+	DWORD num_read = 0;
+	char result = 0;
+	/* Fork fix: check ReadFile result. When the fuzzer exits and the pipe
+	   breaks, ReadFile fails/returns 0 bytes; returning uninitialized data
+	   previously triggered a bogus "unrecognized command" assert popup.
+	   Return 0 so callers treat it as EOF and exit gracefully. */
+	if (!ReadFile(pipe, &result, 1, &num_read, NULL) || num_read != 1) {
+		return 0;
+	}
 	return result;
 }
 
@@ -481,7 +487,8 @@ pre_loop_start_handler(void *wrapcxt, INOUT void **user_data)
 		char command = ReadCommandFromPipe(); 
 
 		if (command != 'F') {
-			if (command == 'Q') {
+			if (command == 'Q' || command == 0) {
+				/* 'Q' = clean shutdown request; 0 = EOF (fuzzer gone) */
 				dr_exit_process(0);
 			}
 			else {
@@ -524,7 +531,8 @@ pre_fuzz_handler(void *wrapcxt, INOUT void **user_data)
 		command = ReadCommandFromPipe();
 
         if(command != 'F') {
-            if(command == 'Q') {
+            if(command == 'Q' || command == 0) {
+                /* 'Q' = clean shutdown request; 0 = EOF (fuzzer gone) */
                 dr_exit_process(0);
             } else {
                 DR_ASSERT_MSG(false, "unrecognized command received over pipe");

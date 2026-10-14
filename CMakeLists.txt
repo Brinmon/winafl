@@ -209,4 +209,11 @@ if (NOT "${DynamoRIO_DIR}" STREQUAL "")
     target_link_libraries(winafl "libvcruntime.lib")
   endif()
 
+  # Fork fix: ntdll_imports.lib (DynamoRIO) and static libucrt both provide
+  # atoi/... aliases on modern SDKs -> LNK2005. Keep both, tolerate duplicates.
+  # Upstream master is broken without this (CI red since 2025-12).
+  if (MSVC)
+    set_property(TARGET winafl APPEND_STRING PROPERTY LINK_FLAGS " /FORCE:MULTIPLE")
+  endif()
+
 endif()
