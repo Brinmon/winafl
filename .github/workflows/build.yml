@@ -62,16 +62,8 @@ jobs:
 
       - name: Smoke test (TinyInst mode, self-contained)
         run: |
-          cd bin\Release
-          mkdir in 2>nul
-          (echo AAAA) > in\s1
-          (echo BBBB) > in\s2
-          start /b "" afl-fuzz.exe -y -i in -o out -t 30000 -- -instrument_module test.exe -target_module test.exe -target_method test_target -nargs 2 -iterations 5000 -persist -loop -- test.exe @@
-          timeout /t 20 /nobreak >nul
-          taskkill /f /im afl-fuzz.exe >nul 2>&1
-          taskkill /f /im test.exe >nul 2>&1
-          type out\fuzzer_stats 2>nul | findstr "execs_done paths_total"
-          findstr "execs_done" out\fuzzer_stats >nul && echo SMOKE-OK || (echo SMOKE-FAILED & exit /b 1)
+          powershell -NoProfile -ExecutionPolicy Bypass -File smoke-test.ps1 -Seconds 25
+          if errorlevel 1 exit /b 1
 
       - name: Package portable bundle
         run: |
