@@ -2,3 +2,11 @@ build64/
 build32/
 dist/
 *.user
+# test artifacts / release outputs
+fuzz.log
+fuzz_err.log
+winafl-portable-win64.zip
+in/
+out*/
+bench_*/
+debug.log
