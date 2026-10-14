@@ -110,6 +110,26 @@ afl-fuzz.exe -y -i in -o out -t 30000 -- ^
   -nargs 2 -iterations 5000 -persist -loop -- target.exe @@
 ```
 
+## Docker 容器（整合在本仓库）
+
+Dockerfile 直接放仓库根目录，构建上下文指向 `package.ps1` 产出的
+`dist\winafl-portable`（单一产物，不复制两份）。一键构建：
+
+```powershell
+.\docker-build.ps1                 # 编译 + 打包 + docker build
+.\docker-build.ps1 -SkipBuild -SkipPackage   # 复用现有 dist，仅 docker build
+```
+
+镜像内 WinAFL 已预编译，无需容器内构建。实测（ltsc2022 + Hyper-V 隔离）：
+
+```powershell
+docker run --rm winfuzz:latest cmd /c C:\winafl\demo.cmd   # 跑内置演示
+docker run --rm -it winfuzz:latest cmd                       # 进 shell
+```
+
+- 容器内跑 TinyInst 模式：`execs_done` 增长、`stability 100%` —— 已验证
+- `container-test.ps1` 是挂在容器里跑的有界测试脚本，供回归验证
+
 ## CI/CD（GitHub Actions）
 
 `.github/workflows/build.yml`：push/tag 自动构建，产出 `winafl-portable-win64.zip`：

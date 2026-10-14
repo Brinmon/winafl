@@ -49,7 +49,25 @@ Copy-Item "$DrDir\bin64\*"             "$drdirOut\bin64" -Recurse -Force
 Copy-Item "$DrDir\lib64\release\*"     "$drdirOut\lib64\release" -Recurse -Force
 Copy-Item "$DrDir\ext\lib64\release\*" "$drdirOut\ext\lib64\release" -Recurse -Force
 
-Write-Host '=== [4] README ==='
+Write-Host '=== [4] demo assets (bundled test target seeds + launcher) ==='
+$indemo = Join-Path $OutDir 'in'
+New-Item -ItemType Directory -Path $indemo -Force | Out-Null
+Set-Content -Path (Join-Path $indemo 'seed1') -Value 'AAAA' -NoNewline
+Set-Content -Path (Join-Path $indemo 'seed2') -Value 'BBBB' -NoNewline
+$demo = @'
+@echo off
+rem Run the bundled WinAFL test target in TinyInst mode (recommended).
+rem From host:  docker run --rm <image> cmd /c C:\winafl\demo.cmd
+cd /d C:\winafl
+if not exist in mkdir in
+if not exist in\seed1 (echo AAAA> in\seed1)
+if not exist in\seed2 (echo BBBB> in\seed2)
+echo [demo] afl-fuzz TinyInst mode against bundled test.exe ...
+afl-fuzz.exe -y -i in -o out -t 30000 -- -instrument_module test.exe -target_module test.exe -target_method test_target -nargs 2 -iterations 5000 -persist -loop -- test.exe @@
+'@
+Set-Content -Path (Join-Path $OutDir 'demo.cmd') -Value $demo -Encoding ASCII
+
+Write-Host '=== [5] README ==='
 Copy-Item 'E:\GitCode\winafl\README-FORK.md' (Join-Path $OutDir 'README.md') -ErrorAction SilentlyContinue
 
 $size = (Get-ChildItem $OutDir -Recurse -File | Measure-Object Length -Sum).Sum
