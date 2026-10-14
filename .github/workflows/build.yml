@@ -1,33 +1,102 @@
-name: Build
-on: [push, pull_request]
+name: Build Portable WinAFL
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
 jobs:
-  build_winafl:
-    runs-on: windows-2019
-    strategy:
-      matrix: 
-        platform: [Win32, x64]
+  build:
+    runs-on: windows-2022
+    # DynamoRIO version known-good with current upstream master.
+    # (Newer DR adds drmgr_register_exit_event; older lacks it. 11.91 verified locally.)
+    env:
+      DR_VERSION: "11.91.20735"
+      DR_BUILD: "cronbuild-11.91.20735"
+    defaults:
+      run:
+        shell: cmd
+
     steps:
-    - uses: actions/checkout@v2
-    - name: Add submodules
-      run: git submodule update --init --recursive
-    - name: Create build dir
-      run: mkdir build_${{ matrix.platform }}
-    - name: Download DynamoRIO
-      working-directory: build_${{ matrix.platform }}
-      run: |
-        pip install requests
-        python -c "import requests; response = requests.get('https://api.github.com/repos/DynamoRIO/dynamorio/releases/latest').json(); url = [asset['browser_download_url'] for asset in response['assets'] if 'Windows' in asset['browser_download_url']][0]; print ('Downloading DynamoRIO from ' + url); fh = open('DynamoRio.zip', 'wb'); fh.write(requests.get(url).content)"
-        7z x DynamoRio.zip
-        mv DynamoRIO-Windows-* DynamoRio-Windows
-    - name: Run cmake
-      working-directory: build_${{ matrix.platform }}
-      run: cmake -G"Visual Studio 16 2019" -A ${{ matrix.platform }} -DDynamoRIO_DIR="build_${{ matrix.platform }}\DynamoRIO-Windows\cmake" -DINTELPT=1 ..
-    - name: Build
-      run: cmake --build build_${{ matrix.platform }} --config Release
-    - name: Add Python scripts to build artifacts dir
-      run: cp *.py build_${{ matrix.platform }}\bin\Release\
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v2
-      with:
-        name: build_${{ matrix.platform }}
-        path: build_${{ matrix.platform }}\bin\Release
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download DynamoRIO
+        run: |
+          curl -sL -o DynamoRio.zip "https://github.com/DynamoRIO/dynamorio/releases/download/%DR_BUILD%/DynamoRIO-Windows-%DR_VERSION%.zip"
+          7z x DynamoRio.zip >nul
+          for /d %%D in (DynamoRIO-Windows-*) do move "%%D" DynamoRIO
+          if errorlevel 1 exit /b 1
+
+      - name: Patch XED to avoid /MT-vs-/MD CRT mismatch
+        run: |
+          powershell -NoProfile -Command "(Get-Content 'third_party\TinyInst\third_party\CMakeLists.txt') -replace 'mfile.py \$\{XED_HOST_CPU\}', 'mfile.py ${XED_HOST_CPU} --no-mscrt' | Set-Content 'third_party\TinyInst\third_party\CMakeLists.txt' -Encoding UTF8"
+
+      - name: Configure (all instrumentation modes)
+        run: |
+          set _CL_=/utf-8 /MD
+          cmake -G "Visual Studio 17 2022" -A x64 . ^
+            -DTINYINST=1 -DINTELPT=1 -DUSE_DRSYMS=1 ^
+            -DDynamoRIO_DIR=%GITHUB_WORKSPACE%\DynamoRIO\cmake ^
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /MD /Zi /utf-8" ^
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /MD /Zi /utf-8" ^
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /INCREMENTAL:NO" ^
+            -DCMAKE_SHARED_LINKER_FLAGS_RELEASE="/DEBUG /INCREMENTAL:NO"
+          if errorlevel 1 exit /b 1
+
+      - name: Build (Release)
+        run: |
+          set _CL_=/utf-8 /MD
+          cmake --build . --config Release -- -m
+          if errorlevel 1 exit /b 1
+
+      - name: Smoke test (TinyInst mode, self-contained)
+        run: |
+          cd bin\Release
+          mkdir in 2>nul
+          (echo AAAA) > in\s1
+          (echo BBBB) > in\s2
+          start /b "" afl-fuzz.exe -y -i in -o out -t 30000 -- -instrument_module test.exe -target_module test.exe -target_method test_target -nargs 2 -iterations 5000 -persist -loop -- test.exe @@
+          timeout /t 20 /nobreak >nul
+          taskkill /f /im afl-fuzz.exe >nul 2>&1
+          taskkill /f /im test.exe >nul 2>&1
+          type out\fuzzer_stats 2>nul | findstr "execs_done paths_total"
+          findstr "execs_done" out\fuzzer_stats >nul && echo SMOKE-OK || (echo SMOKE-FAILED & exit /b 1)
+
+      - name: Package portable bundle
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 ^
+            -BuildDir "%GITHUB_WORKSPACE%\bin\Release" ^
+            -DrDir "%GITHUB_WORKSPACE%\DynamoRIO" ^
+            -OutDir "%GITHUB_WORKSPACE%\dist\winafl-portable"
+          if errorlevel 1 exit /b 1
+
+      - name: Zip bundle
+        run: |
+          powershell -NoProfile -Command "Compress-Archive -Path '%GITHUB_WORKSPACE%\dist\winafl-portable\*' -DestinationPath '%GITHUB_WORKSPACE%\winafl-portable-win64.zip' -Force"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winafl-portable-win64
+          path: winafl-portable-win64.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: winafl-portable-win64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false

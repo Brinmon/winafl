@@ -69,16 +69,60 @@ build_all.bat
 
 ## 端到端冒烟测试
 
-```bat
-cd build64\bin\Release
-mkdir in & echo AAAA > in\seed1
-afl-fuzz.exe -i in -o out -t 30000 -D <DynamoRIO>\bin64 -w %CD%\winafl.dll ^
-  -- -coverage_module test.exe -target_module test.exe -target_method test_target -nargs 2 ^
-  -- test.exe @@
+实测（x64，宿主 i9-12900HX / Win11 23H2）：fuzz 循环正常，`execs_done` 持续增长，
+强杀 fuzzer 后目标进程优雅退出、无弹窗。
+
+### 模式性能对比（`test.exe`，30s 基准）
+
+| 模式 | 吞吐 (execs/sec) | 稳定性 | 说明 |
+|---|---|---|---|
+| **TinyInst (`-y`)** | **~24000** | **100%** | 静态编入 `afl-fuzz.exe`，最便携、最快 |
+| DynamoRIO (`-D`) | ~5600 | 95% | 需捆绑 DynamoRIO 运行时，最灵活 |
+| Intel PT (`-P`) | — | 50% | 硬件追踪，但在 Alder Lake 混合核上报 `err=87` |
+
+> **Intel PT 说明**：理论上最快（硬件分支追踪、~2x 开销），但 i9-12900HX 是
+> P 栋(Golden Cove)+E 栋(Gracemont) 异构微架构，线程迁移破坏 trace，IPT 驱动
+> 查询 trace 报 `err=87`。功能已编入（`-P` 可用），但在混合核 CPU 上不稳定。
+> **实测推荐用 TinyInst 模式（`-y`）。**
+
+## 便携包（整包携带）
+
+`package.ps1` 生成 `dist\winafl-portable\`，可整包拷到**任意 Win10+ x64**：
+
+```
+winafl-portable\
+├─ afl-fuzz.exe (含 TinyInst + Intel PT)  afl-showmap/tmin/analyze.exe
+├─ winafl.dll (DynamoRIO 客户端)  winaflpt-debug.exe  libipt.dll
+├─ *.pdb (符号定位/调试)
+├─ msvcp140.dll vcruntime140*.dll (VC 运行库，目标机无需装 VC++ Redist)
+└─ dynamorio\ (bin64+lib64+ext，供 -D 模式用，~190MB)
 ```
 
-实测（x64, DynamoRIO 模式）：fuzz 循环正常，`execs_done` 持续增长、
-`paths_total`/`stability` 有值，强杀 fuzzer 后目标进程优雅退出、无弹窗。
+- 核心 TinyInst 模式**自包含**，不依赖 DynamoRIO
+- VC 运行库随包分发，干净机器拷贝即用（已验证）
+- 总包约 200MB（含 DynamoRIO）
+
+用法示例（TinyInst，推荐）：
+```bat
+cd winafl-portable
+afl-fuzz.exe -y -i in -o out -t 30000 -- ^
+  -instrument_module target.dll -target_module target.exe -target_method fuzz_one ^
+  -nargs 2 -iterations 5000 -persist -loop -- target.exe @@
+```
+
+## CI/CD（GitHub Actions）
+
+`.github/workflows/build.yml`：push/tag 自动构建，产出 `winafl-portable-win64.zip`：
+
+- runner `windows-2022`（自带 VS2022；上游旧的 `windows-2019` 已停服）
+- 递归拉子模块 → 下载 DynamoRIO 11.91 → 应用 xed 补丁 → 全模式构建
+- 自动跑 TinyInst 冒烟测试（失败则红灯）→ 打包 → 上传 artifact
+- 打 `v*` tag 时自动创建 GitHub Release 并附 zip
+
+发布新版本：
+```bash
+git tag v1.18.0 && git push origin v1.18.0
+```
 
 ---
 

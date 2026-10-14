@@ -1,15 +1,16 @@
 @echo off
 rem ============================================================
-rem WinAFL (Brinmon fork) one-shot build script, x64 Release
+rem WinAFL (Brinmon fork) - FULL build, ALL instrumentation modes
+rem   -P  Intel PT  (fastest, hardware tracing, needs Win10 1809+)
+rem   -y  TinyInst  (fast, lightweight, self-contained in afl-fuzz.exe)
+rem   -D  DynamoRIO(most flexible, needs bundled DynamoRIO runtime)
 rem Prereqs: VS2022 C++ workload, Python3, DynamoRIO at D:\HackerCode\devtools\DynamoRIO
 rem Fork patches (auto-applied):
-rem   1. xed --no-mscrt      : mbuild builds XED /MT -> CRT mismatch (tinyinst is /MD)
-rem   2. winafl /FORCE:MULTIPLE : ntdll_imports vs libucrt atoi clash; upstream CI red since 2025-12
-rem   3. USE_DRSYMS + PDB    : -target_method needs symbols for non-exported functions
+rem   1. xed --no-mscrt      : mbuild builds XED /MT -> CRT mismatch vs /MD tinyinst
+rem   2. winafl /FORCE:MULTIPLE : ntdll_imports vs libucrt atoi clash (upstream CI red)
+rem   3. USE_DRSYMS + PDB    : -target_method needs symbols for non-exported funcs
 rem ============================================================
 call "D:\HackerCode\Microsoft Visual Studio\2022\VC\Auxiliary\Build\vcvars64.bat" >nul
-rem /utf-8: fix C4819 warnings-as-errors on Chinese-locale Windows
-rem /MD: unify CRT for mbuild-invoked cl (cmake targets carry own runtime flag)
 set _CL_=/utf-8 /MD
 cd /d E:\GitCode\winafl
 
@@ -26,6 +27,7 @@ cd build64
 set CMAKE=D:\HackerCode\Microsoft Visual Studio\2022\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe
 "%CMAKE%" -G "Visual Studio 17 2022" -A x64 .. ^
   -DTINYINST=1 ^
+  -DINTELPT=1 ^
   -DUSE_DRSYMS=1 ^
   -DDynamoRIO_DIR=D:/HackerCode/devtools/DynamoRIO/cmake ^
   -DCMAKE_C_FLAGS_RELEASE="/O2 /MD /Zi /utf-8" ^
