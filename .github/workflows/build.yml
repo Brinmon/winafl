@@ -60,17 +60,24 @@ jobs:
           cmake --build . --config Release -- -m
           if errorlevel 1 exit /b 1
 
-      - name: Smoke test (TinyInst mode, self-contained)
+      - name: Smoke test (TinyInst + DynamoRIO modes)
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File smoke-test.ps1 -Seconds 25
+          powershell -NoProfile -ExecutionPolicy Bypass -File smoke-test.ps1 -Seconds 25 -Mode both -DrDir "%GITHUB_WORKSPACE%\DynamoRIO"
           if errorlevel 1 exit /b 1
 
-      - name: Package portable bundle
+      - name: Package portable bundle (verifies completeness)
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1 ^
             -BuildDir "%GITHUB_WORKSPACE%\bin\Release" ^
             -DrDir "%GITHUB_WORKSPACE%\DynamoRIO" ^
             -OutDir "%GITHUB_WORKSPACE%\dist\winafl-portable"
+          if errorlevel 1 exit /b 1
+
+      - name: Smoke test packaged bundle (both modes, from dist)
+        shell: cmd
+        run: |
+          cd /d "%GITHUB_WORKSPACE%\dist\winafl-portable"
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%GITHUB_WORKSPACE%\smoke-test.ps1" -Seconds 20 -Mode both -WorkDir . -DrDir "%GITHUB_WORKSPACE%\dist\winafl-portable\dynamorio"
           if errorlevel 1 exit /b 1
 
       - name: Zip bundle

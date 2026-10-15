@@ -44,6 +44,33 @@ mbuild 默认以 `/MT`（静态 CRT）编译 XED，而 TinyInst 及其余目标�
 
 ---
 
+### 6. 修复便携包 DynamoRIO 运行时缺失（`-D` 模式不可用）
+`package.ps1` 原先只拷贝 `lib64\release\*`，遗漏了 `lib64\` 顶层的运行时 DLL
+（`drpreinject.dll`、`drconfiglib.dll`、`drinjectlib.dll`、`drearlyhelp*.dll`、
+`ntdll_imports.dll`），导致 `-D` 模式直接报：
+
+```
+ERROR: cannot find required file ...\dynamorio/lib64\drpreinject.dll
+```
+
+线上 `v1.18.0` 的 `winafl-portable-win64.zip` 即受此影响（DR 模式仅能靠 TinyInst 代偿）。
+
+- **修复**：`package.ps1` 改为按位宽拷贝 `bin64`/`bin32` + `lib64`/`lib32` +
+  `ext/lib64`、`ext/lib32` 下的全部 **exe/dll**（排除 `.pdb`/`.lib`），并在步骤 [6]
+  做完整性强制校验（17 项必需路径 + 源 `lib64`/`lib32` 顶层 DLL 逐一对账），缺一即
+  **构建失败**。
+- **两个关键事实**（写进脚本注释，避免再犯）：
+  1. `-D` 必须指向**含 `drrun.exe` 的目录**（`bin64` / `bin32`），而不是 DR 根目录——
+     `afl-fuzz`/`afl-showmap` 拼接的是 `<DrDir>\drrun.exe`；
+  2. DynamoRIO 由 `drrun.exe` 位置反推根目录，并要求根目录**完整**：
+     `lib64` 与 `lib32` 都要有 `release/` 与 `debug/` 的 `dynamorio.dll` 及 `drpreinject.dll`，
+     否则会警告 `does not appear to be a valid DynamoRIO root`（64 位目标缺 32 位库也会警告）。
+- **体积**：包体从 ~199MB 降至 **85MB**（改用可执行文件/库精选而非全目录递归，
+  过滤掉了 `.pdb`/`.lib`/debug 符号）；zip 约 24MB。
+- **新增**：`smoke-test.ps1` 默认跑 **TinyInst + DynamoRIO 双模式**（`-Mode both`），
+  CI 增加“打包后从 `dist/` 再跑一次双模式”步骤。此前 CI 只测 TinyInst，因此该缺陷
+  得以静默出厂。
+
 ## 构建方法
 
 前置条件：
@@ -95,12 +122,15 @@ winafl-portable\
 ├─ winafl.dll (DynamoRIO 客户端)  winaflpt-debug.exe  libipt.dll
 ├─ *.pdb (符号定位/调试)
 ├─ msvcp140.dll vcruntime140*.dll (VC 运行库，目标机无需装 VC++ Redist)
-└─ dynamorio\ (bin64+lib64+ext，供 -D 模式用，~190MB)
+├─ demo.cmd (TinyInst 演示)  demo-dynamorio.cmd (DynamoRIO 演示)
+├─ in\ (演示种子)
+└─ dynamorio\ (bin64+bin32+lib64+lib32+ext，供 -D 模式用；仅 exe/dll)
 ```
 
 - 核心 TinyInst 模式**自包含**，不依赖 DynamoRIO
+- DynamoRIO 运行时按位宽完整携带（64 位目标也需要 32 位库，否则 DR 判根目录无效）
 - VC 运行库随包分发，干净机器拷贝即用（已验证）
-- 总包约 200MB（含 DynamoRIO）
+- 总包约 **85MB**（zip 约 24MB）
 
 用法示例（TinyInst，推荐）：
 ```bat
@@ -108,6 +138,14 @@ cd winafl-portable
 afl-fuzz.exe -y -i in -o out -t 30000 -- ^
   -instrument_module target.dll -target_module target.exe -target_method fuzz_one ^
   -nargs 2 -iterations 5000 -persist -loop -- target.exe @@
+```
+
+用法示例（DynamoRIO；`-D` 指向**含 drrun.exe 的目录**）：
+```bat
+cd winafl-portable
+afl-fuzz.exe -i in -o out -t 30000 -D dynamorio\bin64 -w %~dp0winafl.dll -- ^
+  -coverage_module target.dll -target_module target.exe -target_method fuzz_one ^
+  -nargs 2 -- target.exe @@
 ```
 
 ## Docker 容器（整合在本仓库）
