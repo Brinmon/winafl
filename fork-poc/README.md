@@ -47,3 +47,41 @@ PASS: clone isolation WORKS (parent state untouched by the clone)
 build.cmd        :: 需要 VS2022 (vcvars64)
 clone_poc.exe
 ```
+
+---
+
+## 完整验证结果（2026-10-15）
+
+### 能力验证（全部 PASS）
+
+| 验证项 | 数据 |
+|---|---|
+| `RtlCloneUserProcess` 可用（x64 / Win10 19045） | ntdll 导出 ✅ |
+| 共享段穿透 CoW（子写父读） | `cov=[5A 0C]` ✅ |
+| 私有内存 CoW 隔离 | 父状态未被污染 ✅ |
+| 2000 次克隆 + 真实 libvips 解析 | **0 timeout, 0 leak** ✅ |
+| 父进程句柄数 | **135 → 135**（恒定）✅ |
+| 克隆体崩溃 → 父进程存活并识别 | **200/200** ✅ |
+| 克隆体内 LoadLibrary | 成功 ✅ |
+| 吞吐 | **198–356 clones/sec** ✅ |
+
+### 5 个文档记录的坑 — 实测结果
+
+| 坑 | 结果 |
+|---|---|
+| P1 句柄表空洞（ALPC/独占句柄） | ⚠️ 存在但无害（克隆体句柄 12 vs 父 141） |
+| P2 其他线程不克隆 | ❌ 无影响 |
+| P3 同步原语死锁 | ❌ 未发生（2000 次 0 timeout） |
+| P4 克隆体内不能 LoadLibrary | ❌ 证伪（实测成功） |
+| P5 映射视图 ViewUnmap | ❌ 证伪（共享段穿透） |
+
+### 工具清单
+
+| 文件 | 用途 |
+|---|---|
+| `clone_poc.c` | 基础克隆 + CoW 隔离验证 |
+| `shared_mem_poc.c` | 共享段穿透 CoW 验证 |
+| `pitfall_test.c` | 5 个坑 + 泄漏 + 吞吐综合测试 |
+| `crash_test.c` | 克隆体崩溃隔离 + 分类 |
+| `stability_test.c` / `cov_stability.c` | 稳定性指纹对比（方法待改进） |
+| `DEVELOPMENT-PLAN.md` | ★ 详细开发计划 |
