@@ -1,4 +1,0 @@
-harness=harness_crash_fork.exe seed=seed.png iterations=3 crash_mode=0
-pipe=\\.\pipe\afl_pipe_t49804
-
-warm-up round: verdict 'K' (setup cost not counted)
