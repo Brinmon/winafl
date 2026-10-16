@@ -6,4 +6,4 @@
 	url = https://github.com/01org/processor-trace
 [submodule "third_party/TinyInst"]
 	path = third_party/TinyInst
-	url = https://github.com/googleprojectzero/TinyInst.git
+	url = https://github.com/Brinmon/TinyInst.git
