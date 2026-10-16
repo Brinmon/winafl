@@ -1,0 +1,4 @@
+[harness] loading libvips-42.dll
+[harness] libvips loaded @00007FFD779F0000
+[harness] vips_init done, warmup...
+[harness] warmup done

@@ -1,0 +1,5 @@
+harness=harness_crash_fork.exe seed=seed.png iterations=3 crash_mode=0
+pipe=\\.\pipe\afl_pipe_t61184
+
+warm-up round: verdict 'K' (setup cost not counted)
+loop finished: ok=3 crashes=0 timeouts=0 protocol=0 (dt=0ms)
