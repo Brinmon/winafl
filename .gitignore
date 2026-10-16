@@ -10,3 +10,9 @@ in/
 out*/
 bench_*/
 debug.log
+attribution/*.exe
+*.obj
+fork-poc/*.exe
+attribution/*.log
+attribution/*.csv
+fork-poc/*.log

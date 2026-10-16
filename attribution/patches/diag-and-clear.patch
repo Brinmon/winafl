@@ -1,0 +1,72 @@
+# 诊断 + 入口对齐补丁（从本次归因实战留档，2026-10-16）
+#
+# 背景：B 方案（纯上游 winafl）已实测 99.01% 达标 —— 这两段代码不是达标必需，
+#       而是"排查工具箱"：下次任何目标 stability 异常时可重新打上，10 分钟拿到
+#       案发字节 + 案发输入名（上游的 mark_as_variable 落盘在本 fork 被砍了）。
+#
+# 恢复方法：cd E:\GitCode\winafl && git apply attribution/patches/diag-and-clear.patch
+# （若因行号漂移失败，按下方 hunk 手工贴回，均已带 [attribution-diag]/[stability-fix] 标记）
+#
+# 实测参考：诊断版 final4 = 98.72%、纯上游 final5 = 99.01%（差异在输入序列噪声内）；
+#           入口清除的净效应 ≈ -46 个 warmup 字节（a2 6995 → a4 6949，且不排除运行间波动）。
+
+=== hunks below（unified diff 风格，目标 = 本仓库当时状态）===
+
+--- a/afl-fuzz.c
++++ b/afl-fuzz.c
+@@ write_stats_file 末尾（fclose(f); 之前）
++  /* [attribution-diag] dump unstable map byte indices (AFL++-style var_bytes
++     export) -- root-cause analysis only, no effect on fuzzing behavior. */
++  {
++    u32 vi;
++    u8* vb = alloc_printf("%s\\var_bytes.txt", out_dir);
++    FILE* vf = fopen((char*)vb, "w");
++    if (vf) {
++      for (vi = 0; vi < MAP_SIZE; vi++)
++        if (var_bytes[vi]) fprintf(vf, "%u\n", vi);
++      fclose(vf);
++    }
++    ck_free(vb);
++  }
+
+@@ mark_as_variable（ck_free(ldest); 之前）
++  /* [attribution-diag] record which queue input was flagged variable */
++  {
++    u8* vlog = alloc_printf("%s\\variable_paths.log", out_dir);
++    FILE* vf = fopen((char*)vlog, "a");
++    if (vf) { fprintf(vf, "%s\n", q->fname); fclose(vf); }
++    ck_free(vlog);
++  }
+
+@@ calibrate_case 的 var_bytes 置位循环内（stage_max = CAL_CYCLES_LONG; 之后）
++            /* [attribution-diag] per-input unstable byte + count values */
++            {
++              u8* base = strrchr(q->fname, '\\');
++              base = base ? base + 1 : q->fname;
++              u8* vp = alloc_printf("%s\\vardiff_%s.txt", out_dir, base);
++              FILE* vf = fopen((char*)vp, "a");
++              if (vf) {
++                fprintf(vf, "run=%u idx=%u old=%u new=%u\n",
++                        stage_cur, i, first_trace[i], trace_bits[i]);
++                fclose(vf);
++              }
++              ck_free(vp);
++            }
+
+--- a/tinyinst_afl.cpp
++++ b/tinyinst_afl.cpp
+@@ tinyinst_run，TARGET_START 校验之后、status = instrumentation->Continue(timeout); 之前
++    /* [stability-fix] Zero the coverage map at target-function entry so the
++       first calibration run measures only the target function body --
++       mirroring the DynamoRIO client's pre_fuzz_handler/pre_loop_start_handler
++       semantics (winafl.c:506), which TinyInst mode lacked.
++       Measured effect on libvips target: -46 unstable one-shot warmup bytes
++       (a2: 6995 -> a4: 6949); the dominant lazy-init block lives inside the
++       function body and is handled by harness-side warm-up, not by this.
++       NOTE: TinyInstCovMap::map_address is the CHILD-side view; we must
++       clear the fuzzer-side SHM view (trace_bits) instead. */
++    extern unsigned char* trace_bits;
++    if (trace_bits) memset(trace_bits, 0, MAP_SIZE);
+
+# 注意：tinyinst_covmap.h/.cpp 曾有 ClearCoverageBuffer 误实现（对子进程地址 memset 会 AV），
+#       已完整回退，勿恢复。正确目标是 fuzzer 侧 trace_bits（afl-fuzz.c:159 全局）。
