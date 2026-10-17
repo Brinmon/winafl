@@ -71,19 +71,34 @@
 - vcvars32 编 harness；afl-fuzz/litecov/showmap 全部继续用 build64。
 - `-y` 模式 showmap 支持（`afl-showmap.c` optstring 含 y）；预检干跑直接可用。
 
-## FINDING-1：7z.dll 模糊测试发现 1 个 crash（存证 + 已完成的归因边界）
+## FINDING-1（终局判定）：**TinyInst 插桩假象，不是 7-Zip 漏洞** —— 工具链 issue 有真实价值
 
 - 产物：`harnesses/sevenzip_7z/runs/epoch1-20261017-092318/engine/crashes/id_000000_00_...`
-  （2288B，变异自 a.7z；另 status 显示 crash 累计 2，以 crashes 目录为准）。
-- **复现矩阵**：独立进程 10/10 exit0（静默）；litecov 插桩下 **3/3-6/6 必崩**。
-- 故障点：ntdll 堆函数（地址 0x7FFBF8Exxx-F8F2xxx 漂移 = 堆破坏延迟触发，
-  7z.dll 走 msvcrt→默认进程堆，与 harness ucrt 同堆交织）。
-- **二分（harness 内置 env 门禁）**：OPEN_ONLY / NO_EXTRACT / 单格式 / 区间
-  [0,47] / [48,59] 各自 0 崩，全量 6 崩 → **跨段交互**（某格式 Open 破坏 + 后续分配触发）。
-- 待办（需管理员）：`gflags /p /full harness.exe` 页堆抓写越界现场 → omida 定位函数。
-  复现协议：`litecov -instrument_module 7z.dll -target_method fuzz_one -iterations 3 -- harness.exe <crash>`。
-- 门禁 env（已内建 harness，平时不影响 fuzz）：`HARNESS_VERBOSE` `HARNESS_NO_EXTRACT`
-  `HARNESS_OPEN_ONLY` `HARNESS_FMT` `HARNESS_FMT_LO/HI`。
+  （2288B = a.7z 仅差 **1 字节**：offset 2254 = end header 首字节 `0x17→0x97`）。
+- **证据矩阵（六条件，全部实测）**：
+
+  | 条件 | 7z.dll 执行方式 | 结果 |
+  |---|---|---|
+  | 独立 harness 重放 10× + 原生高压循环 20000 轮 | 原生 | **0 崩** |
+  | 7z.exe CLI `t`/`l` | 原生 | 干净拒绝（Headers Error） |
+  | litecov 只插 harness.exe | 7z 原生 | **0/6** |
+  | litecov 插 7z.dll | TinyInst 翻译 | **6/6 崩**（跨会话稳定） |
+  | afl-fuzz campaign 86k execs | TinyInst 翻译 | 1 crash |
+  | **DynamoRIO showmap（独立引擎）** | DRIO 翻译 | **0 崩**（2663 tuples 正常） |
+
+- **判定**：崩溃需同时满足「输入的特定错误路径 + TinyInst 对 7z.dll 的翻译/覆盖插桩」。
+  真 OOB 在原生 20000 轮 writer+tripper 同循环下不可能全部躲过；DRIO 独立代码生成也干净
+  → **非 7-Zip 内存安全缺陷**；根因在 TinyInst/WinAFL 覆盖插桩层（具体指令未定位：
+  子进程 AV 被 litecov first-chance 直杀，VEH 只能抓到加载器断点噪声）。
+- **上游类比**（同族先例）：winafl#418 “WinAFL Internal Crash at PC …”、
+  TinyInst#95 `patch_module_entries is a no-op` → 本例凭「1 字节最小输入 + 6/6 确定性
+  复现 + 双引擎对照」可直接提上游 issue。
+- **对 fuzzing 的实际危害**：假 crash 污染 unique_crashes、消耗分诊时间、长跑中可能淹没
+  真 crash → **crash 三步验证闸门（SKILL 分诊 #7）为对外宣称前的必经关卡**。
+- 早期阶段性结论勘误：“潜伏堆破坏（布局依赖）”的定性**不成立**——布局只是必要条件之一，
+  翻译层才是根因；教训已并入 SKILL #5/#7。
+- 分诊工具（已内建 harness，默认关不影响 fuzz）：`HARNESS_VERBOSE` `HARNESS_SEH`
+  `HARNESS_LOOP` `HARNESS_NO_EXTRACT` `HARNESS_OPEN_ONLY` `HARNESS_FMT[_LO|_HI]`。
 
 ## fuzzkit 端到端实录（4 campaign + 复验）
 

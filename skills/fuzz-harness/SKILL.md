@@ -71,16 +71,27 @@ findstr /C:"stability" /C:"variable_paths" /C:"execs_per_sec" /C:"bitmap_cvg" ou
        `E:\GitCode\winafl\fork-server` 已有 RtlCloneUserProcess 引擎，10000 次克隆实测 0 泄漏）
    (c) 非 persistent 模式（每例重启）
    非 persistent/冷进程的前提同样是先排除预热可覆盖的有界 one-shot（四件套 #1）
-5. **复现矩阵先定性**：独立进程不崩 + litecov 插桩下必崩 = **潜伏堆破坏**（布局依赖），
-   不是"误报"；用 harness 内置 env 门禁二分（`HARNESS_NO_EXTRACT` / `HARNESS_OPEN_ONLY` /
-   `HARNESS_FMT_LO..HI` 单格式区间）压到阶段/格式段，再上 `gflags /p /full` 页堆抓写越界
-   （需管理员）+ omida 定位。完整实录见 `references/real-targets-case.md` FINDING-1
+5. **复现矩阵先定性**：独立进程不崩 + litecov 插桩下必崩 = 崩溃**依赖插桩上下文**，
+   此时**不能**直接断言“真目标 bug”（本案早期误判“潜伏堆破坏”，终局为 TinyInst 假象 → 必须过 #7 闸门）；
+   用 harness 内置 env 门禁二分（`HARNESS_NO_EXTRACT` / `HARNESS_OPEN_ONLY` /
+   `HARNESS_FMT_LO..HI` 单格式区间）压到阶段/格式段做定位；要断言真 bug 还需
+   `gflags /p /full` 页堆（需管理员）+ omida 定位。完整实录见 `references/real-targets-case.md` FINDING-1
 6. **"变量字节」三步定性法**（实测有效，配诊断补丁）：
    ① showmap 同输入×3 diff = 0 → 输入是纯函数；② litecov 同输入×6 "new offsets" ≈ 0
    → 进程内无残留 one-shot；③ 仍高 → 应用 `attribution/patches/diag-and-clear.patch`
    （手工 hunk，36 行）→ 看 var_bytes 模式：**new0 居多=首现分支、bothNZ 掉档=缓存/重试计数**
    → 按 (a)/(b)/(c) 选升级路。诊断版用完必须 `git checkout` 恢复并重建（引擎保持上游态）
-6. **形态契约坑速查**（详见 `references/real-targets-case.md`）：COM 目标要守住库的
+7. **crash 三步验证闸门（对外宣称“发现”前必过）**——实测案例：7z 的 1 个 crash 经此判定为
+   TinyInst 假象而非 7-Zip 漏洞（六条件证据矩阵见 `references/real-targets-case.md` FINDING-1）：
+   ① **独立进程重放 ×10**（不插桩）；② **第二引擎对照**（DynamoRIO：`afl-showmap -D <drrun目录>`
+   —— 注意 -D 是目录非 drrun.exe，`-c winafl.dll` 按 CWD 解析 → 先把 winafl.dll 拷进 harness 目录；
+   路径用相对路径避免 POSIX/Windows 混用）；③ **原生高压循环**（harness 内建
+   `HARNESS_LOOP=N` 同进程 N 轮 writer+tripper）。三者全干净 + 只在目标插桩下必崩
+   → 判**工具链假象**（仍有价值：提上游 issue + 假 crash 会污染 unique_crashes，长跑前应先验）；
+   任一独立路径复现 → 才升级为“真目标 bug”，再上页堆/反编译定位。
+   另：VEH 抓不到 litecov 子进程的 AV（first-chance 被调试器直杀，进程内只能看到
+   加载器断点 0x80000003 噪声）——别指望 in-process dump 取栈。
+8. **形态契约坑速查**（详见 `references/real-targets-case.md`）：COM 目标要守住库的
    对象生命周期（7z stream 活到 Close）与返回值语义（7z Open 的 S_FALSE=拒绝，**只认 S_OK**，
    半初始化对象上续调 = NULL 虚调用）；带依赖链的 DLL 用
    `LoadLibraryEx(..., LOAD_WITH_ALTERED_SEARCH_PATH)`；"每轮回收"含库的错误队列
