@@ -1,11 +1,17 @@
 /*
  * fuzz-harness 通用模板 —— 闭源 Windows DLL 的 WinAFL persistent harness
  * 参考案例：QQ libvips-42.dll（16.72% -> 98.72%，见 references/libvips-case.md）
+ *           多目标实战（COM/多模块/依赖链/x86，见 references/real-targets-case.md）
  *
  * 四件套已内嵌（预热 / 关缓存 / 单线程 / 每轮回收），按目标库替换占位符。
+ * 预热按"种子类"枚举（多对象型库如 OpenSSL3 每类首次使用都是一次性路径）。
  *
- * 构建（必须带 PDB，-target_method 依赖符号）：
+ * 分诊门禁（env 开关，平时不影响 fuzz）：HARNESS_VERBOSE / HARNESS_NO_EXTRACT /
+ *   HARNESS_OPEN_ONLY / HARNESS_FMT[_LO|_HI] —— 用法见 real-targets-case.md FINDING-1。
+ *
+ * 构建（必须带 PDB，-target_method 依赖符号；x86 目标用 scripts/build_harness.cmd x86）：
  *   cl /nologo /O2 /MD /Zi /utf-8 <name>.c /Fe:<name>.exe /link /DEBUG:FULL
+ *   .c 文件不要写 extern "C"（语法错误）；C++ harness 的 fuzz_one 必须 extern "C"
  */
 #include <windows.h>
 #include <stdio.h>

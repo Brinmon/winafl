@@ -21,7 +21,7 @@ class_init / 缓存池 / 线程时序），基线就与后续执行不一致 →
 
 | # | 项 | 要点 |
 |---|---|---|
-| 1 | **预热（最关键）** | 进入 target function **之前**，用**三类代表性样本**各解析一次：①有效输入 ②完全不匹配的垃圾字节 ③**magic 匹配但内容损坏**的样本。三类覆盖三种"首现路径"；每换一个目标库，重新枚举它自己的 one-shot 路径（GType/class_init、解码器注册、首次失败分支……），必要时补第 4、5 类样本。预热样本文件须随 harness 一起分发（放对 CWD）。 |
+| 1 | **预热（最关键）** | 进入 target function **之前**，用**三类代表性样本**各解析一次：①有效输入 ②完全不匹配的垃圾字节 ③**magic 匹配但内容损坏**的样本。三类覆盖三种"首现路径"；每换一个目标库，重新枚举它自己的 one-shot 路径（GType/class_init、解码器注册、首次失败分支……），必要时补第 4、5 类样本。**预热表按"种子类"枚举，不按样本个数**——多格式目标（7z 60 格式）或多对象型库（OpenSSL3 按对象类型/算法首次使用惰性加载）要把全部种子类预热一遍（libcrypto 实测 3 类预热=81.79%，全类预热后复验）。预热样本文件须随 harness 一起分发（放对 CWD）。 |
 | 2 | **关缓存/池** | `GetProcAddress` 找库的缓存关闭 API（libvips: `vips_cache_set_max(0)`；对应你的库找等价物：对象池、LRU、slice 等）。缓存容量边界穿越校准窗口 = 经典污染源。 |
 | 3 | **单线程** | `vips_concurrency_set(1)` / 线程池 API 显式压 1；否则线程调度会让 BB 命中计数逐次漂移。 |
 | 4 | **每轮回收** | 每次调用后 unref 结果对象、清错误缓冲、关句柄。persistent 循环里任何累积（泄漏 ~20KB/次）都是定时炸弹。 |
@@ -30,7 +30,16 @@ class_init / 缓存池 / 线程时序），基线就与后续执行不一致 →
 
 - `__declspec(noinline)` 标注 target function；**带 PDB 构建**（`-target_method` 靠符号定位）
 - 输入读取用**动态缓冲**（模板已改掉 64KB 静态截断的老毛病）
-- 构建命令见 `scripts/build_harness.cmd`（vcvars64 + `/O2 /MD /Zi` + `/DEBUG:FULL`）
+- 构建命令见 `scripts/build_harness.cmd <src> <out.exe> [x64|x86]`（vcvars + `/O2 /MD /Zi` + `/DEBUG:FULL` + oleaut32/ole32）
+- **位数**：x64 目标用默认；**x86 目标 harness 用 `x86` 参数（vcvars32）**——build64 的
+  afl-fuzz/litecov/showmap 原生可插桩 WOW64 目标（TinyInst README Note#1、
+  `debugger.cpp GetProcessPlatform`），无需 32 位引擎；进程位数由 harness 决定
+- **`.c` 里不写 `extern "C"`**（语法错误；x64 C 符号无修饰）；C++ harness 的 `fuzz_one`
+  必须 `extern "C"`；C++ 手写 COM 用**类型化 vtable 结构体**（不能调 `void*`），
+  GUID 比较用 memcmp（`IsEqualGUID` C++ 重载吃引用），`PropVariantClear` 在 ole32.lib
+- **`.cmd` 注释只写 ASCII**（GBK cmd 误读 UTF-8 中文）；嵌套引号的启动命令写进 .cmd
+  再 `cmd //c`；build.cmd 开头 `if not exist artifacts mkdir`；**重建前先 `fuzzkit stop`**
+  （运行中的 campaign 锁 exe → LNK1168）
 
 ## 第 3 步：10 分钟验收协议（新目标必须跑）
 
@@ -54,12 +63,65 @@ findstr /C:"stability" /C:"variable_paths" /C:"execs_per_sec" /C:"bitmap_cvg" ou
    上游版为空属正常——该 fork 的 `mark_as_variable` 落盘被砍）
 2. 最常见根因 = **还有一类"每进程首现路径"没预热** → 把案发输入对应的样本类型加入预热，重跑验收
 3. 次常见 = 缓存/线程/泄漏没关干净 → 回查四件套
-4. 若首现路径**无穷多**（格式空间无限、每种都一套一次性初始化）→ 预热表追不完 → 升级到
-   **fork 路线**（每例干净进程；`E:\GitCode\winafl\fork-server` 已有 RtlCloneUserProcess 引擎，
-   10000 次克隆实测 0 泄漏）或非 persistent 模式（每例重启）
+4. 若首现路径**无穷多**（格式空间无限、每种都一套一次性初始化）→ 预热表追不完 → 按序升级：
+   (a) **`-iterations 1` 每例冷进程**（最小改动；发现/校准两侧同冷，缓存/懒加载型根因必治）——
+       OpenSSL3 实测 81.75%→99.84%，代价 eps ×1/60（TinyInst 每次冷启动重翻译目标模块，
+       1.8MB ≈ +70ms；单例下限公式：实测 floor≈16ms→~60 eps 理论上限）
+   (b) **fork 路线**（每例干净进程且克隆保留插桩态 → 克隆开销≈4ms，比 iterations=1 快一个量级；
+       `E:\GitCode\winafl\fork-server` 已有 RtlCloneUserProcess 引擎，10000 次克隆实测 0 泄漏）
+   (c) 非 persistent 模式（每例重启）
+   非 persistent/冷进程的前提同样是先排除预热可覆盖的有界 one-shot（四件套 #1）
+5. **复现矩阵先定性**：独立进程不崩 + litecov 插桩下必崩 = **潜伏堆破坏**（布局依赖），
+   不是"误报"；用 harness 内置 env 门禁二分（`HARNESS_NO_EXTRACT` / `HARNESS_OPEN_ONLY` /
+   `HARNESS_FMT_LO..HI` 单格式区间）压到阶段/格式段，再上 `gflags /p /full` 页堆抓写越界
+   （需管理员）+ omida 定位。完整实录见 `references/real-targets-case.md` FINDING-1
+6. **"变量字节」三步定性法**（实测有效，配诊断补丁）：
+   ① showmap 同输入×3 diff = 0 → 输入是纯函数；② litecov 同输入×6 "new offsets" ≈ 0
+   → 进程内无残留 one-shot；③ 仍高 → 应用 `attribution/patches/diag-and-clear.patch`
+   （手工 hunk，36 行）→ 看 var_bytes 模式：**new0 居多=首现分支、bothNZ 掉档=缓存/重试计数**
+   → 按 (a)/(b)/(c) 选升级路。诊断版用完必须 `git checkout` 恢复并重建（引擎保持上游态）
+6. **形态契约坑速查**（详见 `references/real-targets-case.md`）：COM 目标要守住库的
+   对象生命周期（7z stream 活到 Close）与返回值语义（7z Open 的 S_FALSE=拒绝，**只认 S_OK**，
+   半初始化对象上续调 = NULL 虚调用）；带依赖链的 DLL 用
+   `LoadLibraryEx(..., LOAD_WITH_ALTERED_SEARCH_PATH)`；"每轮回收"含库的错误队列
+   （OpenSSL `ERR_clear_error`）与 PROPVARIANT
 
 ## 铁律
 
 - **不要相信玩具目标的 100%**——玩具 warmup 会把一次性路径全跑完，真实深调用点才会暴露问题
 - stability 必须与 `bitmap_cvg` **同时**看，且注意口径是否含一次性死重量
 - 诊断/案发定位的完整方法论（逐层隔离 L1–L8）：`references/libvips-case.md`
+- 多目标实战库（四案例验收表、每形态契约坑、fuzzkit 端到端实录、cmd 环境坑）：
+  `references/real-targets-case.md`
+
+## 第 5 步：fuzzkit 对接（campaign 管理，验收通过后接入）
+
+fuzz.toml（L3，`deny_unknown_fields`，路径用单引号字面串）核心字段：
+
+```toml
+[fuzz]
+name = 'sevenzip_7z'
+[target]
+exe = 'artifacts/harness.exe'
+args = ['@@']
+arch = 'x86_64'
+[[target.modules]]          # 模块 sha256 pin（ADR-0011），build 预检即校验
+name = '7z.dll'
+path = 'E:\OtherTool\7-Zip\7z.dll'
+sha256 = '8820...'
+[instrumentation]
+mode = 'tinyinst'
+modules = ['7z.dll']        # 多模块直接加
+iterations = 2000           # 与 10 分钟验收协议一致
+[seeds]
+dirs = ['seeds']
+```
+
+流程：`fuzzkit build <h>`（build.cmd + 13 项预检，**含 afl-showmap 干跑验证插桩**）→
+`fuzzkit start <h> --duration 10m`（detached；`status`/`events` 跟踪；`stop` 收网）→
+`crashes` 回收。实测三规则：
+
+1. 同 workspace **并发启动**时，后续实例会被 `leftovers` 检查误拦（把首个 campaign 的
+   afl-fuzz 当残留）→ 后续加 `--skip-preflight`（build 时已全检）
+2. 重编 harness 后 start 被 `target_hash` 漂移拒绝（**设计正确**，ADR-0016）→ `--fresh` 新 epoch
+3. 预检 `environment` warn（非管理员）对 TinyInst 模式不影响，可继续
