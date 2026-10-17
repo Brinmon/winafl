@@ -5,6 +5,11 @@ description: 为闭源 Windows DLL/程序创建并验收 WinAFL harness（persis
 
 # WinAFL Harness 工厂（闭源 Windows 目标）
 
+> **本机实战落位约定（2026-10-17）**：新建 harness/样例/临时战役一律放
+> `E:\GitCode\fuzzkit\tmp\<workspace>\harnesses\<target>\`（该 tmp 在 fuzzkit
+> 仓内、已 gitignore）；`E:\` 盘根的旧 `fuzzwork-*` 已全部迁入并合并 DB 绝对路径
+> （见 fuzzkit AGENTS.md 目录约定）。目标 DLL/引擎仍用绝对路径引用，不随迁。
+
 ## 核心原理（为什么 harness 必须这么写）
 
 AFL 的 stability = 同一输入重复执行时覆盖位图的一致率。`calibrate_case` 把**第一次执行**

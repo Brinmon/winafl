@@ -1,5 +1,10 @@
 # 实战案例库：四个真实目标 + 32位探针（2026-10-17 验收）
 
+> **路径迁移注（2026-10-17 晚）**：本文所有 `E:\fuzzwork-real\...` 现位于
+> `E:\GitCode\fuzzkit\tmp\fuzzwork-real\...`（e2e/test 同理入 `tmp\`）；
+> 旧目录已移至 `%TEMP%\fuzzkit-premigrate-20261017\`，fuzzkit DB 全表前缀已
+> 迁移（77 处、残留 0、历史计数在新路径下全量可读）。
+
 > 配套 `SKILL.md`。同日批量建 5 个 harness、fuzzkit 端到端跑通 4 个 campaign。
 > 判据口径见 SKILL 第 3 步（stability ≥90%，与 bitmap_cvg 同看）。
 
